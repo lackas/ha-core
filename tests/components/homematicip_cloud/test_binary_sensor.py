@@ -606,3 +606,85 @@ async def test_hmip_multi_contact_interface(
     )
 
     assert ha_state.state == STATE_UNKNOWN
+
+
+async def test_hmip_floor_terminal_block_dew_point_alarm(
+    hass: HomeAssistant, default_mock_hap_factory: HomeFactory
+) -> None:
+    """Test HomematicipFloorTerminalBlockBinarySensor dew point alarm."""
+    from homeassistant.components.homematicip_cloud.const import (
+        DOMAIN as HMIPC_DOMAIN,
+    )
+    from homeassistant.helpers import entity_registry as er
+
+    entity_id = "binary_sensor.heizkreislauf_1_og_bad_r_dew_point_alarm"
+    # Name comes from channel label (parent class name property)
+    entity_name = "Heizkreislauf (1) OG Bad r"
+    device_model = "HmIP-FALMOT-C12"
+
+    # Pre-register entity as enabled BEFORE platform loads
+    entity_registry = er.async_get(hass)
+    entity_registry.async_get_or_create(
+        "binary_sensor",
+        HMIPC_DOMAIN,
+        "3014F7110000000000000049_1_dew_point_alarm",
+        suggested_object_id="heizkreislauf_1_og_bad_r_dew_point_alarm",
+        disabled_by=None,
+    )
+
+    mock_hap = await default_mock_hap_factory.async_get_mock_hap(
+        test_devices=["Fußbodenheizungsaktor"]
+    )
+
+    await hass.async_block_till_done()
+
+    ha_state, hmip_device = get_and_check_entity_basics(
+        hass, mock_hap, entity_id, entity_name, device_model
+    )
+
+    # dewPointAlarmActive is true in fixture
+    assert ha_state.state == STATE_ON
+
+    await async_manipulate_test_data(
+        hass, hmip_device, "dewPointAlarmActive", False, channel=1
+    )
+    ha_state = hass.states.get(entity_id)
+    assert ha_state.state == STATE_OFF
+
+
+async def test_hmip_floor_terminal_block_humidity_pre_alarm(
+    hass: HomeAssistant, default_mock_hap_factory: HomeFactory
+) -> None:
+    """Test HomematicipFloorTerminalBlockBinarySensor humidity pre-alarm."""
+    from homeassistant.components.homematicip_cloud.const import (
+        DOMAIN as HMIPC_DOMAIN,
+    )
+    from homeassistant.helpers import entity_registry as er
+
+    entity_id = "binary_sensor.heizkreislauf_1_og_bad_r_humidity_pre_alarm"
+    # Name comes from channel label (parent class name property)
+    entity_name = "Heizkreislauf (1) OG Bad r"
+    device_model = "HmIP-FALMOT-C12"
+
+    # Pre-register entity as enabled BEFORE platform loads
+    entity_registry = er.async_get(hass)
+    entity_registry.async_get_or_create(
+        "binary_sensor",
+        HMIPC_DOMAIN,
+        "3014F7110000000000000049_1_humidity_pre_alarm",
+        suggested_object_id="heizkreislauf_1_og_bad_r_humidity_pre_alarm",
+        disabled_by=None,
+    )
+
+    mock_hap = await default_mock_hap_factory.async_get_mock_hap(
+        test_devices=["Fußbodenheizungsaktor"]
+    )
+
+    await hass.async_block_till_done()
+
+    ha_state, hmip_device = get_and_check_entity_basics(
+        hass, mock_hap, entity_id, entity_name, device_model
+    )
+
+    # humidityLimiterPreAlarm is true in fixture
+    assert ha_state.state == STATE_ON

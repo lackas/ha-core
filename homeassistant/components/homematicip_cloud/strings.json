@@ -28,6 +28,23 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "floor_terminal_block_dew_point_alarm": {
+        "name": "Dew point alarm"
+      },
+      "floor_terminal_block_emergency_operation": {
+        "name": "Emergency operation"
+      },
+      "floor_terminal_block_frost_protection": {
+        "name": "Frost protection"
+      },
+      "floor_terminal_block_humidity_alarm": {
+        "name": "Humidity alarm"
+      },
+      "floor_terminal_block_humidity_pre_alarm": {
+        "name": "Humidity pre-alarm"
+      }
+    },
     "sensor": {
       "tilt_state": {
         "state": {
