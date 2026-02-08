@@ -2001,7 +2001,13 @@
           "index": 1,
           "label": "Heizkreislauf (1) OG Bad r",
           "valvePosition": 0.475,
-          "valveState": "ADAPTION_DONE"
+          "valveState": "ADAPTION_DONE",
+          "dewPointAlarmActive": true,
+          "emergencyOperationActive": false,
+          "externalClockActive": false,
+          "frostProtectionActive": false,
+          "humidityLimiterAlarm": false,
+          "humidityLimiterPreAlarm": true
         },
         "10": {
           "channelRole": "FLOOR_HEATING_COOLING_CONTROLLER",

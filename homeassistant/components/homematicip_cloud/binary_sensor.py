@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from homematicip.base.enums import SmokeDetectorAlarmType, WindowState
-from homematicip.base.functionalChannels import MultiModeInputChannel
+from homematicip.base.functionalChannels import (
+    FloorTerminalBlockMechanicChannel,
+    MultiModeInputChannel,
+)
 from homematicip.device import (
     AccelerationSensor,
     ContactInterface,
     Device,
+    FloorTerminalBlock6,
+    FloorTerminalBlock10,
+    FloorTerminalBlock12,
     FullFlushContactInterface,
     FullFlushContactInterface6,
     MotionDetectorIndoor,
@@ -27,6 +35,7 @@ from homematicip.device import (
     WeatherSensor,
     WeatherSensorPlus,
     WeatherSensorPro,
+    WiredFloorTerminalBlock12,
     WiredInput32,
 )
 from homematicip.group import SecurityGroup, SecurityZoneGroup
@@ -34,6 +43,7 @@ from homematicip.group import SecurityGroup, SecurityZoneGroup
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
+    BinarySensorEntityDescription,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -71,6 +81,60 @@ SAM_DEVICE_ATTRIBUTES = {
     "accelerationSensorSensitivity": ATTR_ACCELERATION_SENSOR_SENSITIVITY,
     "accelerationSensorTriggerAngle": ATTR_ACCELERATION_SENSOR_TRIGGER_ANGLE,
 }
+
+
+@dataclass(frozen=True, kw_only=True)
+class HmipFloorTerminalBlockBinarySensorDescription(BinarySensorEntityDescription):
+    """Describes HmIP floor terminal block binary sensor entity."""
+
+    value_fn: Callable[[FloorTerminalBlockMechanicChannel], bool | None]
+    attr_name: str
+
+
+FLOOR_TERMINAL_BLOCK_BINARY_SENSORS: tuple[
+    HmipFloorTerminalBlockBinarySensorDescription, ...
+] = (
+    HmipFloorTerminalBlockBinarySensorDescription(
+        key="dew_point_alarm",
+        translation_key="floor_terminal_block_dew_point_alarm",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_registry_enabled_default=False,
+        attr_name="dewPointAlarmActive",
+        value_fn=lambda c: c.dewPointAlarmActive,
+    ),
+    HmipFloorTerminalBlockBinarySensorDescription(
+        key="emergency_operation",
+        translation_key="floor_terminal_block_emergency_operation",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_registry_enabled_default=False,
+        attr_name="emergencyOperationActive",
+        value_fn=lambda c: c.emergencyOperationActive,
+    ),
+    HmipFloorTerminalBlockBinarySensorDescription(
+        key="frost_protection",
+        translation_key="floor_terminal_block_frost_protection",
+        device_class=BinarySensorDeviceClass.COLD,
+        entity_registry_enabled_default=False,
+        attr_name="frostProtectionActive",
+        value_fn=lambda c: c.frostProtectionActive,
+    ),
+    HmipFloorTerminalBlockBinarySensorDescription(
+        key="humidity_alarm",
+        translation_key="floor_terminal_block_humidity_alarm",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_registry_enabled_default=False,
+        attr_name="humidityLimiterAlarm",
+        value_fn=lambda c: c.humidityLimiterAlarm,
+    ),
+    HmipFloorTerminalBlockBinarySensorDescription(
+        key="humidity_pre_alarm",
+        translation_key="floor_terminal_block_humidity_pre_alarm",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_registry_enabled_default=False,
+        attr_name="humidityLimiterPreAlarm",
+        value_fn=lambda c: c.humidityLimiterPreAlarm,
+    ),
+)
 
 
 async def async_setup_entry(
@@ -136,6 +200,23 @@ async def async_setup_entry(
             entities.append(HomematicipSunshineSensor(hap, device))
         if isinstance(device, Device) and device.lowBat is not None:
             entities.append(HomematicipBatterySensor(hap, device))
+
+    # Handle floor terminal block mechanic channels
+    floor_terminal_blocks = (
+        FloorTerminalBlock6,
+        FloorTerminalBlock10,
+        FloorTerminalBlock12,
+        WiredFloorTerminalBlock12,
+    )
+    entities.extend(
+        HomematicipFloorTerminalBlockBinarySensor(hap, device, channel, description)
+        for device in hap.home.devices
+        if isinstance(device, floor_terminal_blocks)
+        for channel in device.functionalChannels
+        if isinstance(channel, FloorTerminalBlockMechanicChannel)
+        for description in FLOOR_TERMINAL_BLOCK_BINARY_SENSORS
+        if hasattr(channel, description.attr_name)
+    )
 
     for group in hap.home.groups:
         if isinstance(group, SecurityGroup):
@@ -539,3 +620,40 @@ class HomematicipSecuritySensorGroup(
             return True
 
         return False
+
+
+class HomematicipFloorTerminalBlockBinarySensor(
+    HomematicipGenericEntity, BinarySensorEntity
+):
+    """Representation of the HomematicIP floor terminal block binary sensor."""
+
+    entity_description: HmipFloorTerminalBlockBinarySensorDescription
+
+    def __init__(
+        self,
+        hap: HomematicipHAP,
+        device,
+        channel: FloorTerminalBlockMechanicChannel,
+        description: HmipFloorTerminalBlockBinarySensorDescription,
+    ) -> None:
+        """Initialize floor terminal block binary sensor."""
+        super().__init__(
+            hap,
+            device,
+            channel=channel.index,
+            is_multi_channel=True,
+            post=description.key,
+        )
+        self.entity_description = description
+        self._sensor_unique_id = f"{device.id}_{channel.index}_{description.key}"
+
+    @property
+    def unique_id(self) -> str:
+        """Return a unique ID."""
+        return self._sensor_unique_id
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return true if the binary sensor is on."""
+        channel = self.get_channel_or_raise()
+        return self.entity_description.value_fn(channel)
