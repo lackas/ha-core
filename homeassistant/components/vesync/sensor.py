@@ -31,6 +31,27 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from .common import is_air_fryer, is_humidifier, is_outlet, rgetattr
+
+def is_dual_fryer(device: VeSyncBaseDevice) -> bool:
+    """Check if the device is a dual-chamber air fryer."""
+    return is_air_fryer(device) and hasattr(device, 'state_chamber_1')
+
+
+def _fryer_time_unit(device: VeSyncBaseDevice) -> str:
+    """Return the time unit for the air fryer (seconds or minutes)."""
+    if hasattr(device.state, 'time_units') and device.state.time_units == 'seconds':
+        return UnitOfTime.SECONDS
+    return UnitOfTime.MINUTES
+
+
+def _chamber_attr(chamber: int, attr: str):
+    """Return a lambda to get a chamber attribute."""
+    def _get(device):
+        state = getattr(device, f'state_chamber_{chamber}', None)
+        if state is None:
+            return None
+        return getattr(state, attr, None)
+    return _get
 from .const import AIR_FRYER_MODE_MAP, VS_DEVICES, VS_DISCOVERY
 from .coordinator import VesyncConfigEntry, VeSyncDataCoordinator
 from .entity import VeSyncBaseEntity
@@ -171,6 +192,7 @@ SENSORS: tuple[VeSyncSensorEntityDescription, ...] = (
             is_humidifier(device) and device.state.temperature is not None
         ),
     ),
+    # --- Single-chamber air fryer sensors (legacy) ---
     VeSyncSensorEntityDescription(
         key="cook_status",
         translation_key="cook_status",
@@ -178,7 +200,7 @@ SENSORS: tuple[VeSyncSensorEntityDescription, ...] = (
         value_fn=lambda device: AIR_FRYER_MODE_MAP.get(
             device.state.cook_status.lower(), device.state.cook_status.lower()
         ),
-        exists_fn=is_air_fryer,
+        exists_fn=lambda device: is_air_fryer(device) and not is_dual_fryer(device),
         options=[
             "cooking_end",
             "cooking",
@@ -197,7 +219,7 @@ SENSORS: tuple[VeSyncSensorEntityDescription, ...] = (
         use_device_temperature_unit=True,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda device: device.state.current_temp,
-        exists_fn=is_air_fryer,
+        exists_fn=lambda device: is_air_fryer(device) and not is_dual_fryer(device),
     ),
     VeSyncSensorEntityDescription(
         key="cook_set_temp",
@@ -206,7 +228,7 @@ SENSORS: tuple[VeSyncSensorEntityDescription, ...] = (
         use_device_temperature_unit=True,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda device: device.state.cook_set_temp,
-        exists_fn=is_air_fryer,
+        exists_fn=lambda device: is_air_fryer(device) and not is_dual_fryer(device),
     ),
     VeSyncSensorEntityDescription(
         key="cook_set_time",
@@ -214,7 +236,7 @@ SENSORS: tuple[VeSyncSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
         value_fn=lambda device: device.state.cook_set_time,
-        exists_fn=is_air_fryer,
+        exists_fn=lambda device: is_air_fryer(device) and not is_dual_fryer(device),
     ),
     VeSyncSensorEntityDescription(
         key="preheat_set_time",
@@ -222,7 +244,82 @@ SENSORS: tuple[VeSyncSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
         value_fn=lambda device: device.state.preheat_set_time,
-        exists_fn=is_air_fryer,
+        exists_fn=lambda device: is_air_fryer(device) and not is_dual_fryer(device),
+    ),
+    # --- Dual-chamber air fryer sensors ---
+    VeSyncSensorEntityDescription(
+        key="zone_1_status",
+        translation_key="cook_status",
+        device_class=SensorDeviceClass.ENUM,
+        value_fn=lambda device: AIR_FRYER_MODE_MAP.get(
+            str(device.state_chamber_1.cook_status or 'standby').lower(),
+            str(device.state_chamber_1.cook_status or 'standby').lower(),
+        ),
+        exists_fn=is_dual_fryer,
+        options=[
+            "cooking_end",
+            "cooking",
+            "cooking_stop",
+            "heating",
+            "preheat_end",
+            "preheat_stop",
+            "pull_out",
+            "standby",
+        ],
+    ),
+    VeSyncSensorEntityDescription(
+        key="zone_2_status",
+        translation_key="cook_status",
+        device_class=SensorDeviceClass.ENUM,
+        value_fn=lambda device: AIR_FRYER_MODE_MAP.get(
+            str(device.state_chamber_2.cook_status or 'standby').lower(),
+            str(device.state_chamber_2.cook_status or 'standby').lower(),
+        ),
+        exists_fn=is_dual_fryer,
+        options=[
+            "cooking_end",
+            "cooking",
+            "cooking_stop",
+            "heating",
+            "preheat_end",
+            "preheat_stop",
+            "pull_out",
+            "standby",
+        ],
+    ),
+    VeSyncSensorEntityDescription(
+        key="zone_1_temperature",
+        translation_key="cook_set_temp",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        use_device_temperature_unit=True,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda device: device.state_chamber_1.cook_set_temp or None,
+        exists_fn=is_dual_fryer,
+    ),
+    VeSyncSensorEntityDescription(
+        key="zone_2_temperature",
+        translation_key="cook_set_temp",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        use_device_temperature_unit=True,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda device: device.state_chamber_2.cook_set_temp or None,
+        exists_fn=is_dual_fryer,
+    ),
+    VeSyncSensorEntityDescription(
+        key="zone_1_remaining",
+        translation_key="cook_set_time",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        value_fn=lambda device: device.state_chamber_1.cook_last_time or None,
+        exists_fn=is_dual_fryer,
+    ),
+    VeSyncSensorEntityDescription(
+        key="zone_2_remaining",
+        translation_key="cook_set_time",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        value_fn=lambda device: device.state_chamber_2.cook_last_time or None,
+        exists_fn=is_dual_fryer,
     ),
 )
 
