@@ -11,6 +11,7 @@ from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelState,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -91,17 +92,43 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
     @override
     async def async_alarm_disarm(self, code: str | None = None) -> None:
         """Send disarm command."""
-        await self._home.set_security_zones_activation_async(False, False)
+        await self._async_set_security_zones_activation(internal=False, external=False)
 
     @override
     async def async_alarm_arm_home(self, code: str | None = None) -> None:
         """Send arm home command."""
-        await self._home.set_security_zones_activation_async(False, True)
+        await self._async_set_security_zones_activation(internal=False, external=True)
 
     @override
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Send arm away command."""
-        await self._home.set_security_zones_activation_async(True, True)
+        await self._async_set_security_zones_activation(internal=True, external=True)
+
+    async def _async_set_security_zones_activation(
+        self, internal: bool, external: bool
+    ) -> None:
+        """Set the zone activation and raise when the panel refuses it."""
+        result = await self._home.set_security_zones_activation_async(
+            internal, external
+        )
+        if result.success:
+            return
+        problems = self._home.get_security_zone_activation_problems(result)
+        if problems:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="alarm_activation_blocked",
+                translation_placeholders={
+                    "problems": "; ".join(
+                        f"{label}: {', '.join(r.replace('_', ' ').lower() for r in reasons)}"
+                        for label, reasons in problems.items()
+                    )
+                },
+            )
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="alarm_activation_failed",
+        )
 
     @override
     async def async_added_to_hass(self) -> None:
