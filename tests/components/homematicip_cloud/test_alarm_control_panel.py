@@ -6,6 +6,13 @@ from homematicip.async_home import AsyncHome
 import pytest
 
 from homeassistant.components.alarm_control_panel import AlarmControlPanelState
+from homeassistant.components.homematicip_cloud import DOMAIN as HMIPC_DOMAIN
+from homeassistant.components.homematicip_cloud.alarm_control_panel import (
+    ATTR_BLOCKING_DEVICES,
+    ATTR_MODE,
+    SERVICE_ARM_ANYWAY,
+)
+from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
@@ -155,3 +162,99 @@ async def test_hmip_alarm_control_panel_activation_failed(
             {"entity_id": entity_id},
             blocking=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_internal"),
+    [("away", True), ("home", False)],
+)
+async def test_hmip_alarm_control_panel_arm_anyway(
+    hass: HomeAssistant,
+    default_mock_hap_factory: HomeFactory,
+    mode: str,
+    expected_internal: bool,
+) -> None:
+    """Test that arm_anyway arms past the blocking sensors."""
+    entity_id = "alarm_control_panel.hmip_alarm_control_panel"
+    mock_hap = await default_mock_hap_factory.async_get_mock_hap(
+        test_groups=["EXTERNAL", "INTERNAL"]
+    )
+    home = mock_hap.home
+    home.set_security_zones_activation_with_ignore_list_async.return_value = Mock(
+        success=True
+    )
+
+    await hass.services.async_call(
+        HMIPC_DOMAIN,
+        SERVICE_ARM_ANYWAY,
+        {ATTR_ENTITY_ID: entity_id, ATTR_MODE: mode},
+        blocking=True,
+    )
+
+    home.set_security_zones_activation_with_ignore_list_async.assert_awaited_once_with(
+        expected_internal, True
+    )
+
+
+async def test_hmip_alarm_control_panel_arm_anyway_failed(
+    hass: HomeAssistant, default_mock_hap_factory: HomeFactory
+) -> None:
+    """Test that a refused arm_anyway is reported."""
+    entity_id = "alarm_control_panel.hmip_alarm_control_panel"
+    mock_hap = await default_mock_hap_factory.async_get_mock_hap(
+        test_groups=["EXTERNAL", "INTERNAL"]
+    )
+    home = mock_hap.home
+    home.set_security_zones_activation_with_ignore_list_async.return_value = Mock(
+        success=False, json={}
+    )
+
+    with pytest.raises(HomeAssistantError, match="did not accept"):
+        await hass.services.async_call(
+            HMIPC_DOMAIN,
+            SERVICE_ARM_ANYWAY,
+            {ATTR_ENTITY_ID: entity_id, ATTR_MODE: "away"},
+            blocking=True,
+        )
+
+
+async def test_hmip_alarm_control_panel_blocking_devices(
+    hass: HomeAssistant, default_mock_hap_factory: HomeFactory
+) -> None:
+    """Test that a refusal publishes the blocking devices and a success clears them."""
+    entity_id = "alarm_control_panel.hmip_alarm_control_panel"
+    mock_hap = await default_mock_hap_factory.async_get_mock_hap(
+        test_groups=["EXTERNAL", "INTERNAL"]
+    )
+    home = mock_hap.home
+
+    assert hass.states.get(entity_id).attributes[ATTR_BLOCKING_DEVICES] == []
+
+    home.set_security_zones_activation_async.return_value = Mock(
+        success=False,
+        json={
+            "channelActivationProblems": {
+                "3014F7110000000000000005:1": ["WINDOW_OPEN"],
+                "3014F7110000000000000001:1": ["WINDOW_OPEN"],
+            }
+        },
+    )
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "alarm_control_panel",
+            "alarm_arm_away",
+            {"entity_id": entity_id},
+            blocking=True,
+        )
+
+    assert hass.states.get(entity_id).attributes[ATTR_BLOCKING_DEVICES] == [
+        "Fenster",
+        "Wohnzimmer",
+    ]
+
+    home.set_security_zones_activation_async.return_value = Mock(success=True)
+    await hass.services.async_call(
+        "alarm_control_panel", "alarm_disarm", {"entity_id": entity_id}, blocking=True
+    )
+
+    assert hass.states.get(entity_id).attributes[ATTR_BLOCKING_DEVICES] == []

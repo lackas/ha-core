@@ -1,9 +1,10 @@
 """Support for HomematicIP Cloud alarm control panel."""
 
 import logging
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, Any, override
 
 from homematicip.functionalHomes import SecurityAndAlarmHome
+import voluptuous as vol
 
 from homeassistant.components.alarm_control_panel import (
     AlarmControlPanelEntity,
@@ -12,7 +13,7 @@ from homeassistant.components.alarm_control_panel import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_platform
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -23,6 +24,12 @@ _LOGGER = logging.getLogger(__name__)
 
 CONST_ALARM_CONTROL_PANEL_NAME = "HmIP Alarm Control Panel"
 
+ATTR_BLOCKING_DEVICES = "blocking_devices"
+ATTR_MODE = "mode"
+MODE_AWAY = "away"
+MODE_HOME = "home"
+SERVICE_ARM_ANYWAY = "arm_anyway"
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -32,6 +39,12 @@ async def async_setup_entry(
     """Set up the HomematicIP alrm control panel from a config entry."""
     hap = config_entry.runtime_data
     async_add_entities([HomematicipAlarmControlPanelEntity(hap)])
+
+    entity_platform.async_get_current_platform().async_register_entity_service(
+        SERVICE_ARM_ANYWAY,
+        {vol.Required(ATTR_MODE): vol.In([MODE_HOME, MODE_AWAY])},
+        "async_arm_anyway",
+    )
 
 
 class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
@@ -48,6 +61,7 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
     def __init__(self, hap: HomematicipHAP) -> None:
         """Initialize the alarm control panel."""
         self._home: AsyncHome = hap.home
+        self._blocking_devices: list[str] = []
 
     @property
     @override
@@ -86,6 +100,12 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
         return AlarmControlPanelState.DISARMED
 
     @property
+    @override
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the devices that refused the last arming attempt."""
+        return {ATTR_BLOCKING_DEVICES: self._blocking_devices}
+
+    @property
     def _security_and_alarm(self) -> SecurityAndAlarmHome:
         return self._home.get_functionalHome(SecurityAndAlarmHome)
 
@@ -97,10 +117,23 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
             internal, external
         )
         # a request-based panel answers 200 without arming when a sensor blocks it
+        self._raise_for_result(result)
+
+    def _raise_for_result(self, result) -> None:
+        """Raise a translated error when the panel did not accept the request."""
+        problems = (
+            self._home.get_security_zone_activation_problems(result)
+            if not result.success
+            else {}
+        )
+        # the access point does not push this, so it is taken from the reply
+        blocking = sorted(label.strip() for label in problems)
+        if blocking != self._blocking_devices:
+            self._blocking_devices = blocking
+            self.async_write_ha_state()
+
         if result.success:
             return
-
-        problems = self._home.get_security_zone_activation_problems(result)
         if not problems:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -109,7 +142,7 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="alarm_activation_blocked",
-            translation_placeholders={"devices": ", ".join(sorted(problems))},
+            translation_placeholders={"devices": ", ".join(self._blocking_devices)},
         )
 
     @override
@@ -126,6 +159,13 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
     async def async_alarm_arm_away(self, code: str | None = None) -> None:
         """Send arm away command."""
         await self._async_set_zones_activation(internal=True, external=True)
+
+    async def async_arm_anyway(self, mode: str) -> None:
+        """Arm although sensors report a problem, leaving them unmonitored."""
+        result = await self._home.set_security_zones_activation_with_ignore_list_async(
+            mode == MODE_AWAY, True
+        )
+        self._raise_for_result(result)
 
     @override
     async def async_added_to_hass(self) -> None:
