@@ -4,7 +4,6 @@ import logging
 from typing import TYPE_CHECKING, Any, override
 
 from homematicip.functionalHomes import SecurityAndAlarmHome
-from homematicip.group import SecurityZoneGroup
 import voluptuous as vol
 
 from homeassistant.components.alarm_control_panel import (
@@ -62,6 +61,7 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
     def __init__(self, hap: HomematicipHAP) -> None:
         """Initialize the alarm control panel."""
         self._home: AsyncHome = hap.home
+        self._blocking_devices: list[str] = []
 
     @property
     @override
@@ -102,21 +102,8 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
     @property
     @override
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the devices the panel offers to leave unmonitored.
-
-        Empty until the panel is asked to arm; the access point fills this in
-        response to an arming request.
-        """
-        return {ATTR_BLOCKING_DEVICES: sorted(self._blocking_devices)}
-
-    @property
-    def _blocking_devices(self) -> set[str]:
-        return {
-            device.label.strip()
-            for group in self._home.groups
-            if isinstance(group, SecurityZoneGroup)
-            for device in group.ignorableDevices
-        }
+        """Return the devices that refused the last arming attempt."""
+        return {ATTR_BLOCKING_DEVICES: self._blocking_devices}
 
     @property
     def _security_and_alarm(self) -> SecurityAndAlarmHome:
@@ -134,10 +121,19 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
 
     def _raise_for_result(self, result) -> None:
         """Raise a translated error when the panel did not accept the request."""
+        problems = (
+            self._home.get_security_zone_activation_problems(result)
+            if not result.success
+            else {}
+        )
+        # the access point does not push this, so it is taken from the reply
+        blocking = sorted(label.strip() for label in problems)
+        if blocking != self._blocking_devices:
+            self._blocking_devices = blocking
+            self.async_write_ha_state()
+
         if result.success:
             return
-
-        problems = self._home.get_security_zone_activation_problems(result)
         if not problems:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -146,7 +142,7 @@ class HomematicipAlarmControlPanelEntity(AlarmControlPanelEntity):
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="alarm_activation_blocked",
-            translation_placeholders={"devices": ", ".join(sorted(problems))},
+            translation_placeholders={"devices": ", ".join(self._blocking_devices)},
         )
 
     @override

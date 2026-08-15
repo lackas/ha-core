@@ -221,7 +221,7 @@ async def test_hmip_alarm_control_panel_arm_anyway_failed(
 async def test_hmip_alarm_control_panel_blocking_devices(
     hass: HomeAssistant, default_mock_hap_factory: HomeFactory
 ) -> None:
-    """Test the devices the panel offers to leave unmonitored."""
+    """Test that a refusal publishes the blocking devices and a success clears them."""
     entity_id = "alarm_control_panel.hmip_alarm_control_panel"
     mock_hap = await default_mock_hap_factory.async_get_mock_hap(
         test_groups=["EXTERNAL", "INTERNAL"]
@@ -230,19 +230,31 @@ async def test_hmip_alarm_control_panel_blocking_devices(
 
     assert hass.states.get(entity_id).attributes[ATTR_BLOCKING_DEVICES] == []
 
-    external_zone_id = home._rawJSONData["functionalHomes"]["SECURITY_AND_ALARM"][
-        "securityZones"
-    ]["EXTERNAL"]
-    external_zone = home.search_group_by_id(external_zone_id)
-    external_zone.ignorableDevices = [
-        home.search_device_by_id("3014F7110000000000000005"),
-        home.search_device_by_id("3014F7110000000000000001"),
-    ]
-    # device labels come back with trailing whitespace on real hardware
-    external_zone.ignorableDevices[0].label = "Wohnzimmer "
-    await _async_manipulate_security_zones(hass, home)
+    home.set_security_zones_activation_async.return_value = Mock(
+        success=False,
+        json={
+            "channelActivationProblems": {
+                "3014F7110000000000000005:1": ["WINDOW_OPEN"],
+                "3014F7110000000000000001:1": ["WINDOW_OPEN"],
+            }
+        },
+    )
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "alarm_control_panel",
+            "alarm_arm_away",
+            {"entity_id": entity_id},
+            blocking=True,
+        )
 
     assert hass.states.get(entity_id).attributes[ATTR_BLOCKING_DEVICES] == [
         "Fenster",
         "Wohnzimmer",
     ]
+
+    home.set_security_zones_activation_async.return_value = Mock(success=True)
+    await hass.services.async_call(
+        "alarm_control_panel", "alarm_disarm", {"entity_id": entity_id}, blocking=True
+    )
+
+    assert hass.states.get(entity_id).attributes[ATTR_BLOCKING_DEVICES] == []

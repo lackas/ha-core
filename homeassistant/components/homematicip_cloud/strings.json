@@ -152,6 +152,14 @@
       }
     }
   },
+  "selector": {
+    "arm_anyway_mode": {
+      "options": {
+        "away": "Away",
+        "home": "Home"
+      }
+    }
+  },
   "services": {
     "activate_eco_mode_with_duration": {
       "description": "Activates the eco mode for a specified duration.",
