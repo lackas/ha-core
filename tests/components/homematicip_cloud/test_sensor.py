@@ -1,7 +1,10 @@
 """Tests for HomematicIP Cloud sensor."""
 
+from unittest.mock import patch
+
 from homematicip.base.enums import ValveState, WindowState
 import pytest
+from syrupy.assertion import SnapshotAssertion
 
 from homeassistant.components.homematicip_cloud import DOMAIN
 from homeassistant.components.homematicip_cloud.entity import (
@@ -34,6 +37,7 @@ from homeassistant.const import (
     LIGHT_LUX,
     PERCENTAGE,
     STATE_UNKNOWN,
+    Platform,
     UnitOfLength,
     UnitOfPower,
     UnitOfRatio,
@@ -46,6 +50,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .helper import HomeFactory, async_manipulate_test_data, get_and_check_entity_basics
+
+from tests.common import snapshot_platform
 
 
 async def test_hmip_accesspoint_status(
@@ -365,6 +371,33 @@ async def test_hmip_motion_detector_push_button_single_illuminance(
     )
     assert illuminance_states[0].state == "14.2"
     assert "does not generate unique IDs" not in caplog.text
+
+
+async def test_hmip_motion_detector_switch_outdoor_illuminance(
+    hass: HomeAssistant,
+    default_mock_hap_factory: HomeFactory,
+    entity_registry: er.EntityRegistry,
+    snapshot: SnapshotAssertion,
+) -> None:
+    """Test the illuminance of a motion detector with switching actuator."""
+    entity_id = "sensor.bewegungsmelder_haustur_illuminance"
+    with patch(
+        "homeassistant.components.homematicip_cloud.hap.PLATFORMS",
+        [Platform.SENSOR],
+    ):
+        mock_hap = await default_mock_hap_factory.async_get_mock_hap(
+            test_devices=["Bewegungsmelder Haustür"], test_groups=[]
+        )
+
+    await snapshot_platform(
+        hass, entity_registry, snapshot, mock_hap.config_entry.entry_id
+    )
+
+    hmip_device = mock_hap.hmip_device_by_entity_id[entity_id]
+    await async_manipulate_test_data(
+        hass, hmip_device, "illumination", 231, channel=0, channel_real_index=1
+    )
+    assert hass.states.get(entity_id).state == "231"
 
 
 async def test_hmip_windspeed_sensor(
